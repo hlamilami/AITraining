@@ -42,6 +42,10 @@
 
 [Gates determined based on constitution file]
 
+> **Principle IV gate (v1.1.0+)**: Verify the feature design includes an `AuditLog` table
+> with `Operation_Type`, `Operation_Id`, `Initiator`, and `Timestamp` columns. Confirm
+> every system action (mutations AND reads on sensitive data) produces an entry.
+
 ## Project Structure
 
 ### Documentation (this feature)

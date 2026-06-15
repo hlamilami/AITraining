@@ -93,6 +93,17 @@
 - **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
 - **FR-005**: System MUST [behavior, e.g., "log all security events"]
 
+> **Audit requirement (constitution v1.1.0+, NON-NEGOTIABLE)**: Every action in the system
+> MUST produce an entry in the `AuditLog` table. Each entry MUST include at minimum:
+> `Operation_Type` (controlled vocabulary), `Operation_Id` (system-generated UUID),
+> `Initiator` (authenticated actor identity), and `Timestamp` (server-assigned UTC).
+> This requirement applies to ALL operations — mutations, sensitive reads, auth events,
+> and admin actions. Add a functional requirement explicitly covering this:
+>
+> - **FR-XXX**: System MUST record an `AuditLog` entry for every operation, capturing
+>   `Operation_Type`, `Operation_Id`, `Initiator`, and `Timestamp`. The `AuditLog` table
+>   MUST be append-only; no operation may delete or modify existing entries.
+
 *Example of marking unclear requirements:*
 
 - **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]

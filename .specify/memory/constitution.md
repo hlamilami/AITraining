@@ -1,18 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (none) → 1.0.0  [initial ratification]
+Version change: 1.0.0 → 1.1.0  [MINOR — material expansion of Principle IV]
 Added sections:
-  - Core Principles (I–VII)
-  - Security & Compliance Standards
-  - Development Workflow & Quality Gates
-  - Governance
-Modified principles: N/A (initial creation)
+  - Principle IV: mandatory AuditLog table schema (Operation_Type, Operation_Id, Initiator, Timestamp)
+  - Principle IV: universal action coverage rule (every system action must produce an audit entry)
+  - Principle IV: append-only enforcement and retention rules
+Modified principles:
+  - IV. Full Auditability & Observability — significantly expanded with prescriptive schema and scope
 Removed sections: N/A
 Templates checked:
-  - .specify/templates/plan-template.md     ✅ Constitution Check section present; gates apply
-  - .specify/templates/spec-template.md     ✅ FR/SC/Assumption sections align with principles
-  - .specify/templates/tasks-template.md    ✅ Phase structure supports principle-driven task types
+  - .specify/templates/plan-template.md     ✅ Constitution Check gate updated; audit table gate added
+  - .specify/templates/spec-template.md     ✅ Requirements section guidance updated
+  - .specify/templates/tasks-template.md    ✅ Foundational phase now includes audit table task
 Deferred TODOs: none
 -->
 
@@ -73,22 +73,71 @@ liability. Compliance gates MUST be part of the definition of done.
 
 ### IV. Full Auditability & Observability (NON-NEGOTIABLE)
 
-Every system action affecting financial state MUST be fully traceable.
+Every system action — without exception — MUST be fully traceable through a canonical
+`AuditLog` table. Observability infrastructure MUST be in place before any business feature
+is implemented.
 
-- Every state change to a financial entity (account, transaction, ledger entry) MUST produce
-  an immutable audit log entry containing: actor identity, timestamp (UTC), correlation ID,
-  before-state, and after-state.
-- Structured JSON logging MUST be used throughout; free-text log lines are NOT acceptable in
-  production code.
+#### Mandatory AuditLog Table
+
+Every service MUST maintain a dedicated `AuditLog` table (or collection) with **at minimum**
+the following columns. Additional columns are permitted but these four are NON-NEGOTIABLE:
+
+| Column | Type | Rules |
+|--------|------|-------|
+| `Operation_Id` | UUID / GUID | Primary key; system-generated; unique per entry |
+| `Operation_Type` | String (non-null) | Identifies what happened (e.g., `AccountCreated`, `TransferCompleted`, `LoginAttempt`, `BalanceQueried`). Use a controlled vocabulary — free-text values are PROHIBITED. |
+| `Initiator` | String (non-null) | Identity of the actor who triggered the action. MUST be sourced from the authenticated JWT `sub` claim, system service account name, or scheduler identity. Anonymous or empty values are PROHIBITED. |
+| `Timestamp` | DateTimeOffset / UTC | Exact UTC time the action was processed. MUST be server-assigned; client-supplied timestamps are PROHIBITED. |
+
+**Recommended additional columns** (MUST be included wherever technically feasible):
+- `CorrelationId` — links the audit entry to the originating request trace.
+- `EntityType` — the domain object affected (e.g., `Account`, `Transfer`).
+- `EntityId` — the identifier of the specific entity instance.
+- `BeforeState` — JSON snapshot of entity state before the operation.
+- `AfterState` — JSON snapshot of entity state after the operation.
+
+#### Universal Coverage Rule
+
+The following rule applies to **every action in the system** — not only financial mutations:
+
+> **Every operation that creates, modifies, queries, or deletes data, or that represents a
+> meaningful system event, MUST produce exactly one `AuditLog` entry before the operation
+> is considered complete.**
+
+This includes but is not limited to:
+- Account creation, balance changes, fund transfers (financial state mutations)
+- Read operations on sensitive data (e.g., balance queries, account lookups)
+- Authentication and authorization events (login, token refresh, access denied)
+- Administrative actions (configuration changes, role assignments)
+- System-initiated operations (scheduled jobs, retries, compensating transactions)
+
+Failure to write an audit entry MUST cause the enclosing operation to fail; partial
+operations with no audit trail are PROHIBITED.
+
+#### Immutability & Retention
+
+- The `AuditLog` table MUST be append-only: `UPDATE` and `DELETE` statements targeting
+  audit rows are PROHIBITED at the application layer.
+- At the database layer, row-level security or trigger-based guards MUST enforce
+  append-only access in non-development environments.
+- Audit records MUST be retained for a minimum of 7 years (or longer if jurisdiction
+  requires), consistent with Principle III (Compliance & Regulatory Adherence).
+
+#### Observability Infrastructure
+
+- Structured JSON logging MUST be used throughout; free-text log lines are NOT acceptable
+  in production code.
 - Distributed tracing correlation IDs MUST be generated at ingress and propagated to all
-  downstream service calls and log entries.
-- All services MUST expose latency (p50/p95/p99), error-rate, and saturation metrics to the
-  observability platform.
-- Silent failures are PROHIBITED; every caught exception MUST be logged with sufficient context
-  to reproduce the issue.
+  downstream service calls, log entries, and `AuditLog.CorrelationId`.
+- All services MUST expose latency (p50/p95/p99), error-rate, and saturation metrics to
+  the observability platform.
+- Silent failures are PROHIBITED; every caught exception MUST be logged with sufficient
+  context to reproduce the issue.
 
 **Rationale**: Auditability is both a regulatory requirement and an operational necessity.
-Without it, fraud investigation and incident response are impossible.
+A consistent, machine-readable audit table enables fraud investigation, incident response,
+compliance reporting, and forensic analysis. Without universal coverage, gaps in the audit
+trail become attack vectors and compliance liabilities.
 
 ### V. Test-First Development (NON-NEGOTIABLE)
 
@@ -177,7 +226,7 @@ The following gates are MANDATORY before any code merges to the main branch:
 - [ ] Unit coverage ≥ 80% for new/changed business-logic modules.
 - [ ] Contract tests written and passing for all new API boundaries.
 - [ ] Integration tests cover the critical path end-to-end.
-- [ ] Audit logging verified for every new state-change operation.
+- [ ] Audit logging verified for every new state-change operation; **every action has an `AuditLog` entry with `Operation_Type`, `Operation_Id`, `Initiator`, and `Timestamp`**.
 - [ ] Regulatory requirements documented and confirmed met.
 - [ ] `plan.md` Constitution Check section completed without unresolved violations.
 - [ ] Performance tested under expected load; baselines met.
@@ -212,4 +261,4 @@ Any conflict between this document and another guideline is resolved in favour o
 - Any observed violation MUST be raised as a severity-1 issue and resolved before the next
   production release.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-06-15
+**Version**: 1.1.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-06-15

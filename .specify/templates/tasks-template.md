@@ -67,8 +67,9 @@ Examples of foundational tasks (adjust based on your project):
 - [ ] T005 [P] Implement authentication/authorization framework
 - [ ] T006 [P] Setup API routing and middleware structure
 - [ ] T007 Create base models/entities that all stories depend on
-- [ ] T008 Configure error handling and logging infrastructure
-- [ ] T009 Setup environment configuration management
+- [ ] T008 Create `AuditLog` table/entity with required columns: `Operation_Id` (UUID PK), `Operation_Type` (string, controlled vocab), `Initiator` (string, from auth identity), `Timestamp` (UTC); enforce append-only (no update/delete); wire audit-write into all service operations
+- [ ] T009 Configure error handling and logging infrastructure
+- [ ] T010 Setup environment configuration management
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
