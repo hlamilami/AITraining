@@ -1,0 +1,389 @@
+openapi: "3.0.3"
+info:
+  title: Fund Transfer Service API
+  version: "1.0"
+  description: |
+    Backend REST API for account management and fund transfers.
+
+    ## Monetary Amounts
+    All `balance` and `amount` fields are **integers in minor currency units** (e.g., cents for
+    USD/EUR). For example, `10050` represents $100.50 USD. Never use fractional values.
+
+    ## Idempotency
+    `POST /v1/transfers` requires an `Idempotency-Key` header (UUID v4). Submitting the same
+    key twice returns the original result without re-processing. A `200 OK` indicates an
+    idempotent replay; `201 Created` indicates a new transfer.
+
+    ## Authentication
+    All endpoints require a valid Bearer JWT issued by the upstream identity provider.
+    For transfers, the JWT `sub` claim must match the source account's `owner` field,
+    unless the caller holds the `transfer:admin` scope.
+
+servers:
+  - url: http://localhost:5000/v1
+    description: Local development (HTTP)
+  - url: https://localhost:5001/v1
+    description: Local development (HTTPS)
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /accounts:
+    post:
+      tags: [Accounts]
+      summary: Create a new account
+      description: |
+        Creates a new bank account with a system-assigned account number.
+        The `owner` value is stored as supplied; upstream authentication has already
+        verified the caller's identity.
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+            example:
+              owner: "user-abc-123"
+              currency: "USD"
+              initialBalance: 100000
+      responses:
+        '201':
+          description: Account created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+              example:
+                accountNumber: "ACC-20260615-0001"
+                owner: "user-abc-123"
+                currency: "USD"
+                balance: 100000
+                createdAt: "2026-06-15T13:40:00Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /accounts/{accountNumber}:
+    get:
+      tags: [Accounts]
+      summary: Retrieve account details and current balance
+      description: |
+        Returns the full account record including the current balance.
+        Accessible to any authenticated caller.
+      operationId: getAccount
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          description: The system-assigned account number.
+          schema:
+            type: string
+            example: "ACC-20260615-0001"
+      responses:
+        '200':
+          description: Account found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+              example:
+                accountNumber: "ACC-20260615-0001"
+                owner: "user-abc-123"
+                currency: "USD"
+                balance: 95000
+                createdAt: "2026-06-15T13:40:00Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /transfers:
+    post:
+      tags: [Transfers]
+      summary: Transfer funds between two accounts
+      description: |
+        Atomically debits the source account and credits the destination account.
+
+        **Idempotency**: Include a unique `Idempotency-Key` header (UUID v4) with every request.
+        Replaying the same key returns the original result (`200 OK`) without processing again.
+
+        **Authorization**: The caller's JWT `sub` claim must match `sourceAccount.owner`,
+        unless the caller holds the `transfer:admin` scope.
+
+        **Constraints**:
+        - Both accounts must exist and share the same currency.
+        - Source account must have sufficient balance.
+        - Source and destination accounts must be different.
+        - Amount must be a positive integer (> 0) in minor currency units.
+      operationId: createTransfer
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique UUID v4 key to ensure idempotent processing.
+          schema:
+            type: string
+            format: uuid
+            example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransferRequest'
+            example:
+              sourceAccountNumber: "ACC-20260615-0001"
+              destinationAccountNumber: "ACC-20260615-0002"
+              amount: 5000
+      responses:
+        '201':
+          description: Transfer created and completed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '200':
+          description: Idempotent replay — original transfer result returned unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/BusinessRuleError'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT issued by the upstream identity provider. Must contain a `sub` claim
+        identifying the caller. Optionally contains a `scope` claim including
+        `transfer:admin` for elevated transfer privileges.
+
+  schemas:
+
+    CreateAccountRequest:
+      type: object
+      required:
+        - owner
+        - currency
+        - initialBalance
+      properties:
+        owner:
+          type: string
+          maxLength: 256
+          description: Caller-supplied owner identifier (e.g., user ID from the identity system).
+          example: "user-abc-123"
+        currency:
+          type: string
+          description: ISO 4217 currency code (3 uppercase letters).
+          pattern: "^[A-Z]{3}$"
+          example: "USD"
+        initialBalance:
+          type: integer
+          format: int64
+          description: Starting balance in minor currency units (e.g., cents). Must be >= 0.
+          minimum: 0
+          example: 100000
+
+    AccountResponse:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+          description: System-assigned unique account identifier.
+          example: "ACC-20260615-0001"
+        owner:
+          type: string
+          description: Owner identifier as supplied at account creation.
+          example: "user-abc-123"
+        currency:
+          type: string
+          description: ISO 4217 currency code.
+          example: "USD"
+        balance:
+          type: integer
+          format: int64
+          description: Current balance in minor currency units (e.g., cents).
+          example: 100000
+        createdAt:
+          type: string
+          format: date-time
+          description: Account creation timestamp (UTC ISO 8601).
+          example: "2026-06-15T13:40:00Z"
+
+    CreateTransferRequest:
+      type: object
+      required:
+        - sourceAccountNumber
+        - destinationAccountNumber
+        - amount
+      properties:
+        sourceAccountNumber:
+          type: string
+          description: Account number to debit.
+          example: "ACC-20260615-0001"
+        destinationAccountNumber:
+          type: string
+          description: Account number to credit. Must differ from source.
+          example: "ACC-20260615-0002"
+        amount:
+          type: integer
+          format: int64
+          description: Amount to transfer in minor currency units. Must be > 0.
+          minimum: 1
+          example: 5000
+
+    TransferResponse:
+      type: object
+      properties:
+        transferId:
+          type: string
+          format: uuid
+          description: System-assigned transfer identifier.
+          example: "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+        idempotencyKey:
+          type: string
+          format: uuid
+          description: The caller-supplied idempotency key.
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        sourceAccountNumber:
+          type: string
+          example: "ACC-20260615-0001"
+        destinationAccountNumber:
+          type: string
+          example: "ACC-20260615-0002"
+        amount:
+          type: integer
+          format: int64
+          description: Transfer amount in minor currency units.
+          example: 5000
+        currency:
+          type: string
+          description: Currency of the transfer (ISO 4217).
+          example: "USD"
+        status:
+          type: string
+          enum: [Completed, Rejected]
+          description: Outcome of the transfer.
+          example: "Completed"
+        failureReason:
+          type: string
+          nullable: true
+          description: |
+            Populated when `status` is `Rejected`. Possible values:
+            `InsufficientFunds`, `CurrencyMismatch`, `SameAccountTransfer`,
+            `SourceAccountNotFound`, `DestinationAccountNotFound`, `InvalidAmount`.
+          example: null
+        initiatedBy:
+          type: string
+          description: JWT `sub` claim of the requester.
+          example: "user-abc-123"
+        timestamp:
+          type: string
+          format: date-time
+          description: Transfer processing timestamp (UTC ISO 8601).
+          example: "2026-06-15T13:45:00Z"
+
+    ErrorResponse:
+      type: object
+      description: RFC 7807 Problem Details
+      properties:
+        type:
+          type: string
+          description: URI reference identifying the error type.
+          example: "https://tools.ietf.org/html/rfc7231#section-6.5.1"
+        title:
+          type: string
+          description: Human-readable summary of the error.
+          example: "Validation error"
+        status:
+          type: integer
+          description: HTTP status code.
+          example: 400
+        detail:
+          type: string
+          description: Specific explanation of this error occurrence.
+          example: "The 'currency' field must be a valid ISO 4217 code."
+        traceId:
+          type: string
+          description: Correlation ID for log tracing (mirrors X-Correlation-ID response header).
+          example: "a1b2c3d4-0000-0000-0000-ef1234567890"
+
+  responses:
+
+    ValidationError:
+      description: |
+        400 Bad Request — Input validation failed.
+        Returned when required fields are missing, values are out of range, or formats are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: "https://tools.ietf.org/html/rfc7231#section-6.5.1"
+            title: "Validation error"
+            status: 400
+            detail: "initialBalance must be >= 0."
+            traceId: "00-abc123-def456-00"
+
+    Unauthorized:
+      description: 401 Unauthorized — Missing or invalid Bearer JWT.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: |
+        403 Forbidden — Authenticated caller does not have permission to perform this operation.
+        For transfers: the caller's JWT `sub` does not match the source account owner and the
+        caller does not hold the `transfer:admin` scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: 404 Not Found — The requested account does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: "https://tools.ietf.org/html/rfc7231#section-6.5.4"
+            title: "Not Found"
+            status: 404
+            detail: "Account 'ACC-99999999-0001' does not exist."
+            traceId: "00-abc123-def456-00"
+
+    BusinessRuleError:
+      description: |
+        422 Unprocessable Entity — Request is structurally valid but violates a business rule.
+        Returned for: insufficient funds, currency mismatch, same-account transfer.
+        The transfer record is persisted with `status: Rejected` and a `failureReason`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: "https://api.fundtransfer.example/errors/insufficient-funds"
+            title: "Insufficient Funds"
+            status: 422
+            detail: "Source account balance (4500) is less than the requested transfer amount (5000)."
+            traceId: "00-abc123-def456-00"
