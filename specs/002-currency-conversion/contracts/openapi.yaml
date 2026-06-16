@@ -1,0 +1,624 @@
+openapi: 3.0.3
+info:
+  title: Banking Backend API - Currency Conversion & Cross-Currency Transfers
+  version: "2.0"
+  description: |
+    OpenAPI contract for the currency conversion and cross-currency transfer feature.
+
+    Monetary amounts are integers in minor currency units (`int64`). Exchange-rate values use
+    fixed-point decimal numbers with up to 6 fractional digits. Cross-currency transfers lock the
+    current rate at initiation time by storing `appliedExchangeRateId` on the transfer record.
+servers:
+  - url: http://localhost:5000
+    description: Local development (HTTP)
+  - url: https://localhost:5001
+    description: Local development (HTTPS)
+security:
+  - bearerAuth: []
+tags:
+  - name: Accounts
+    description: Existing account operations required to validate transfer scenarios.
+  - name: Exchange Rates
+    description: Manage and retrieve directed exchange rates.
+  - name: Transfers
+    description: Create same-currency and cross-currency transfers.
+paths:
+  /v1/accounts:
+    post:
+      tags: [Accounts]
+      summary: Create an account
+      operationId: createAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+            example:
+              owner: user-usd-001
+              currency: USD
+              initialBalance: 100000
+      responses:
+        '201':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/accounts/{accountId}:
+    get:
+      tags: [Accounts]
+      summary: Retrieve an account
+      operationId: getAccount
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          description: Account identifier.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Account found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/exchange-rates:
+    post:
+      tags: [Exchange Rates]
+      summary: Create or update the current exchange rate for a directed currency pair
+      operationId: createExchangeRate
+      description: |
+        Creates a new current rate for a directed pair. If a current rate already exists for the
+        pair, the old row is superseded and retained in history.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExchangeRateRequest'
+            example:
+              sourceCurrency: USD
+              targetCurrency: EUR
+              rate: 0.920345
+      responses:
+        '201':
+          description: Exchange rate created or updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeRateWriteResponse'
+              example:
+                id: 8d0fbfd0-8e8f-4126-8c60-5268775d5ca8
+                sourceCurrency: USD
+                targetCurrency: EUR
+                rate: 0.920345
+                effectiveFrom: '2026-06-16T10:00:00Z'
+                createdBy: admin-user-id
+        '400':
+          description: Invalid rate submission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                sameCurrency:
+                  value:
+                    type: https://api.bank.example/errors/validation
+                    title: Validation error
+                    status: 400
+                    code: SAME_CURRENCY_PAIR
+                    detail: Source and target currencies must differ.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+                nonPositiveRate:
+                  value:
+                    type: https://api.bank.example/errors/validation
+                    title: Validation error
+                    status: 400
+                    code: INVALID_RATE
+                    detail: Rate must be greater than zero and use at most 6 decimal places.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+                invalidCurrency:
+                  value:
+                    type: https://api.bank.example/errors/validation
+                    title: Validation error
+                    status: 400
+                    code: INVALID_CURRENCY
+                    detail: Currency must be one of USD, EUR, GBP, SAR, AED.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Authenticated caller lacks the `exchange-rate:admin` scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                type: https://api.bank.example/errors/forbidden
+                title: Forbidden
+                status: 403
+                code: MISSING_SCOPE
+                detail: Scope exchange-rate:admin is required.
+                traceId: 00-11111111111111111111111111111111-2222222222222222-00
+
+  /v1/exchange-rates/{sourceCurrency}/{targetCurrency}:
+    get:
+      tags: [Exchange Rates]
+      summary: Get the current exchange rate for a directed currency pair
+      operationId: getCurrentExchangeRate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sourceCurrency
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/CurrencyCode'
+        - name: targetCurrency
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/CurrencyCode'
+      responses:
+        '200':
+          description: Current exchange rate returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeRateReadResponse'
+              example:
+                id: 8d0fbfd0-8e8f-4126-8c60-5268775d5ca8
+                sourceCurrency: USD
+                targetCurrency: EUR
+                rate: 0.920345
+                effectiveFrom: '2026-06-16T10:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No current rate exists for the requested pair.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                type: https://api.bank.example/errors/not-found
+                title: Not Found
+                status: 404
+                code: EXCHANGE_RATE_NOT_FOUND
+                detail: No current exchange rate exists for USD -> EUR.
+                traceId: 00-11111111111111111111111111111111-2222222222222222-00
+
+  /v1/transfers:
+    post:
+      tags: [Transfers]
+      summary: Create a same-currency or cross-currency transfer
+      operationId: createTransfer
+      description: |
+        Creates a transfer using the caller-supplied `Idempotency-Key` header.
+
+        - If `sourceCurrency` and `destinationCurrency` are omitted, the service infers them from
+          the source and destination accounts.
+        - If present, the currency fields must match the accounts' denominations and signal that a
+          cross-currency conversion is expected.
+        - For cross-currency transfers, the service resolves the current rate once, stores
+          `appliedExchangeRateId`, computes `destinationAmount = floor(sourceAmount x rate)`, and
+          commits debit and credit atomically.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Caller-supplied unique key for idempotent transfer creation.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransferRequest'
+            example:
+              sourceAccountId: 2b2c16b2-b03a-4219-a4fd-a8bbd3e531ce
+              destinationAccountId: 39801f38-d6c6-4aa0-afb3-3f784e78a9a4
+              amount: 10000
+              sourceCurrency: USD
+              destinationCurrency: EUR
+      responses:
+        '201':
+          description: Transfer created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+              example:
+                id: aa33d8f2-f5fd-4f3f-ab33-597a191ed257
+                idempotencyKey: 7e9af95e-ef59-4c98-8a6d-c8b767a5a56d
+                sourceAccountId: 2b2c16b2-b03a-4219-a4fd-a8bbd3e531ce
+                destinationAccountId: 39801f38-d6c6-4aa0-afb3-3f784e78a9a4
+                status: Completed
+                createdAt: '2026-06-16T10:05:00Z'
+                appliedExchangeRateId: 8d0fbfd0-8e8f-4126-8c60-5268775d5ca8
+                sourceAmount: 10000
+                destinationAmount: 9203
+                sourceCurrency: USD
+                destinationCurrency: EUR
+        '200':
+          description: Idempotent replay. The original transfer result is returned unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Business-rule failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noExchangeRate:
+                  value:
+                    type: https://api.bank.example/errors/no-exchange-rate
+                    title: Exchange rate unavailable
+                    status: 422
+                    code: NO_EXCHANGE_RATE
+                    detail: No active exchange rate exists for USD -> GBP.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+                zeroDestinationAmount:
+                  value:
+                    type: https://api.bank.example/errors/zero-destination-amount
+                    title: Destination amount is zero
+                    status: 422
+                    code: ZERO_DESTINATION_AMOUNT
+                    detail: The converted amount would credit 0 minor units.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+                destinationOverflow:
+                  value:
+                    type: https://api.bank.example/errors/destination-overflow
+                    title: Destination balance overflow
+                    status: 422
+                    code: DESTINATION_OVERFLOW
+                    detail: The converted amount would exceed the destination account balance limit.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+                insufficientFunds:
+                  value:
+                    type: https://api.bank.example/errors/insufficient-funds
+                    title: Insufficient funds
+                    status: 422
+                    code: INSUFFICIENT_FUNDS
+                    detail: Source account balance is lower than the requested source amount.
+                    traceId: 00-11111111111111111111111111111111-2222222222222222-00
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT bearer token. `POST /v1/exchange-rates` requires the `exchange-rate:admin` scope.
+        All other endpoints require any authenticated user.
+
+  schemas:
+    CurrencyCode:
+      type: string
+      enum: [USD, EUR, GBP, SAR, AED]
+      pattern: '^[A-Z]{3}$'
+      example: USD
+
+    RateValue:
+      type: number
+      minimum: 0.000001
+      exclusiveMinimum: true
+      multipleOf: 0.000001
+      example: 0.920345
+      description: Positive fixed-point exchange rate with up to 6 decimal places.
+
+    CreateAccountRequest:
+      type: object
+      required:
+        - owner
+        - currency
+        - initialBalance
+      properties:
+        owner:
+          type: string
+          maxLength: 256
+          example: user-usd-001
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        initialBalance:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 100000
+
+    AccountResponse:
+      type: object
+      required:
+        - id
+        - owner
+        - currency
+        - balance
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 2b2c16b2-b03a-4219-a4fd-a8bbd3e531ce
+        owner:
+          type: string
+          example: user-usd-001
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        balance:
+          type: integer
+          format: int64
+          example: 100000
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-16T09:55:00Z'
+
+    CreateExchangeRateRequest:
+      type: object
+      required:
+        - sourceCurrency
+        - targetCurrency
+        - rate
+      properties:
+        sourceCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        targetCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        rate:
+          $ref: '#/components/schemas/RateValue'
+
+    ExchangeRateWriteResponse:
+      type: object
+      required:
+        - id
+        - sourceCurrency
+        - targetCurrency
+        - rate
+        - effectiveFrom
+        - createdBy
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        targetCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        rate:
+          $ref: '#/components/schemas/RateValue'
+        effectiveFrom:
+          type: string
+          format: date-time
+          example: '2026-06-16T10:00:00Z'
+        createdBy:
+          type: string
+          example: admin-user-id
+
+    ExchangeRateReadResponse:
+      type: object
+      required:
+        - id
+        - sourceCurrency
+        - targetCurrency
+        - rate
+        - effectiveFrom
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        targetCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        rate:
+          $ref: '#/components/schemas/RateValue'
+        effectiveFrom:
+          type: string
+          format: date-time
+          example: '2026-06-16T10:00:00Z'
+
+    CreateTransferRequest:
+      type: object
+      required:
+        - sourceAccountId
+        - destinationAccountId
+        - amount
+      properties:
+        sourceAccountId:
+          type: string
+          format: uuid
+          example: 2b2c16b2-b03a-4219-a4fd-a8bbd3e531ce
+        destinationAccountId:
+          type: string
+          format: uuid
+          example: 39801f38-d6c6-4aa0-afb3-3f784e78a9a4
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Source amount in minor units.
+          example: 10000
+        sourceCurrency:
+          allOf:
+            - $ref: '#/components/schemas/CurrencyCode'
+          nullable: true
+          description: Optional explicit source currency; when provided it must match the source account.
+        destinationCurrency:
+          allOf:
+            - $ref: '#/components/schemas/CurrencyCode'
+          nullable: true
+          description: Optional explicit destination currency; when provided it must match the destination account.
+
+    TransferResponse:
+      type: object
+      required:
+        - id
+        - idempotencyKey
+        - sourceAccountId
+        - destinationAccountId
+        - status
+        - createdAt
+        - sourceAmount
+        - destinationAmount
+        - sourceCurrency
+        - destinationCurrency
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: aa33d8f2-f5fd-4f3f-ab33-597a191ed257
+        idempotencyKey:
+          type: string
+          format: uuid
+          example: 7e9af95e-ef59-4c98-8a6d-c8b767a5a56d
+        sourceAccountId:
+          type: string
+          format: uuid
+          example: 2b2c16b2-b03a-4219-a4fd-a8bbd3e531ce
+        destinationAccountId:
+          type: string
+          format: uuid
+          example: 39801f38-d6c6-4aa0-afb3-3f784e78a9a4
+        status:
+          type: string
+          enum: [Pending, Completed, Failed]
+          example: Completed
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-16T10:05:00Z'
+        appliedExchangeRateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Present for cross-currency transfers; null for same-currency transfers.
+          example: 8d0fbfd0-8e8f-4126-8c60-5268775d5ca8
+        sourceAmount:
+          type: integer
+          format: int64
+          example: 10000
+        destinationAmount:
+          type: integer
+          format: int64
+          example: 9203
+        sourceCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        destinationCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+
+    ErrorResponse:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - code
+        - detail
+        - traceId
+      properties:
+        type:
+          type: string
+          example: https://api.bank.example/errors/validation
+        title:
+          type: string
+          example: Validation error
+        status:
+          type: integer
+          example: 400
+        code:
+          type: string
+          example: INVALID_CURRENCY
+        detail:
+          type: string
+          example: Currency must be one of USD, EUR, GBP, SAR, AED.
+        traceId:
+          type: string
+          example: 00-11111111111111111111111111111111-2222222222222222-00
+
+  responses:
+    ValidationError:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: https://api.bank.example/errors/validation
+            title: Validation error
+            status: 400
+            code: INVALID_REQUEST
+            detail: One or more input fields are invalid.
+            traceId: 00-11111111111111111111111111111111-2222222222222222-00
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: https://api.bank.example/errors/unauthorized
+            title: Unauthorized
+            status: 401
+            code: UNAUTHENTICATED
+            detail: A valid bearer token is required.
+            traceId: 00-11111111111111111111111111111111-2222222222222222-00
+    Forbidden:
+      description: Authenticated caller is not allowed to perform the operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: https://api.bank.example/errors/forbidden
+            title: Forbidden
+            status: 403
+            code: FORBIDDEN
+            detail: The caller is not allowed to transfer from the specified source account.
+            traceId: 00-11111111111111111111111111111111-2222222222222222-00
+    NotFound:
+      description: Requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: https://api.bank.example/errors/not-found
+            title: Not Found
+            status: 404
+            code: RESOURCE_NOT_FOUND
+            detail: The requested resource does not exist.
+            traceId: 00-11111111111111111111111111111111-2222222222222222-00
