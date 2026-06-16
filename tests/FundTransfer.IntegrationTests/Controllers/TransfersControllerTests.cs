@@ -137,7 +137,7 @@ public class TransfersControllerTests : IClassFixture<CustomWebApplicationFactor
 
         var body = await response.Content.ReadFromJsonAsync<TransferResponse>();
         body!.Status.Should().Be("Rejected");
-        body.FailureReason.Should().Be("CurrencyMismatch");
+        body.FailureReason.Should().Be("NoExchangeRateAvailable");
     }
 
     [Fact]

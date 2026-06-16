@@ -13,6 +13,8 @@ public static class DomainConstants
         public const string SourceAccountNotFound = "SourceAccountNotFound";
         public const string DestinationAccountNotFound = "DestinationAccountNotFound";
         public const string InvalidAmount = "InvalidAmount";
+        public const string NoExchangeRateAvailable = "NoExchangeRateAvailable";
+        public const string ConversionResultsInZero = "ConversionResultsInZero";
     }
 }
 

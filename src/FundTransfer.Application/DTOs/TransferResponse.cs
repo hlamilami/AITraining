@@ -32,4 +32,13 @@ public class TransferResponse
 
     /// <summary>UTC timestamp of the transfer.</summary>
     public DateTimeOffset Timestamp { get; set; }
+
+    /// <summary>Exchange rate ID used for cross-currency transfers.</summary>
+    public Guid? AppliedExchangeRateId { get; set; }
+
+    /// <summary>Exchange rate value applied, if cross-currency.</summary>
+    public decimal? AppliedRate { get; set; }
+
+    /// <summary>Amount credited to the destination account in destination currency minor units.</summary>
+    public long? DestinationAmount { get; set; }
 }

@@ -8,7 +8,6 @@ namespace FundTransfer.Api.Controllers;
 /// <summary>Manages bank accounts.</summary>
 [ApiController]
 [Route("v1/accounts")]
-[Authorize]
 public class AccountsController : ControllerBase
 {
     private readonly AccountService _accountService;

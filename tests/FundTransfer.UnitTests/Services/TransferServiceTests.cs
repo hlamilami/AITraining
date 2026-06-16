@@ -14,11 +14,12 @@ public class TransferServiceTests
     private readonly Mock<IAccountRepository> _accountRepoMock = new();
     private readonly Mock<ITransferRepository> _transferRepoMock = new();
     private readonly Mock<IAuditLogRepository> _auditLogRepoMock = new();
+    private readonly Mock<IExchangeRateRepository> _exchangeRateRepoMock = new();
     private readonly TransferService _sut;
 
     public TransferServiceTests()
     {
-        _sut = new TransferService(_accountRepoMock.Object, _transferRepoMock.Object, _auditLogRepoMock.Object);
+        _sut = new TransferService(_accountRepoMock.Object, _transferRepoMock.Object, _auditLogRepoMock.Object, _exchangeRateRepoMock.Object);
     }
 
     private Account MakeAccount(string number, string owner, string currency, long balance) =>
@@ -75,19 +76,42 @@ public class TransferServiceTests
     }
 
     [Fact]
-    public async Task ExecuteTransferAsync_CurrencyMismatch_ReturnsRejected()
+    public async Task ExecuteTransferAsync_CrossCurrency_NoRate_ReturnsNoExchangeRateAvailable()
     {
         var source = MakeAccount("ACC-SRC", "alice", "USD", 10000L);
         var dest = MakeAccount("ACC-DST", "bob", "EUR", 5000L);
         _transferRepoMock.Setup(r => r.GetByIdempotencyKeyAsync("key-4", default)).ReturnsAsync((Transfer?)null);
         _accountRepoMock.Setup(r => r.GetByAccountNumberAsync("ACC-SRC", default)).ReturnsAsync(source);
         _accountRepoMock.Setup(r => r.GetByAccountNumberAsync("ACC-DST", default)).ReturnsAsync(dest);
+        _exchangeRateRepoMock.Setup(r => r.GetActiveRateAsync("USD", "EUR", default)).ReturnsAsync((ExchangeRate?)null);
 
         var request = new CreateTransferRequest { SourceAccountNumber = "ACC-SRC", DestinationAccountNumber = "ACC-DST", Amount = 1000L };
         var (response, isReplay) = await _sut.ExecuteTransferAsync(request, "key-4", "alice", "corr-1");
 
         response.Status.Should().Be(TransferStatus.Rejected.ToString());
-        response.FailureReason.Should().Be(DomainConstants.FailureReasonCodes.CurrencyMismatch);
+        response.FailureReason.Should().Be(DomainConstants.FailureReasonCodes.NoExchangeRateAvailable);
+    }
+
+    [Fact]
+    public async Task ExecuteTransferAsync_CrossCurrency_WithRate_ReturnsCompleted()
+    {
+        var source = MakeAccount("ACC-SRC", "alice", "USD", 10000L);
+        var dest = MakeAccount("ACC-DST", "bob", "EUR", 5000L);
+        var rate = new ExchangeRate { Id = Guid.NewGuid(), SourceCurrency = "USD", TargetCurrency = "EUR", Rate = 0.92m, IsActive = true };
+        _transferRepoMock.Setup(r => r.GetByIdempotencyKeyAsync("key-x", default)).ReturnsAsync((Transfer?)null);
+        _accountRepoMock.Setup(r => r.GetByAccountNumberAsync("ACC-SRC", default)).ReturnsAsync(source);
+        _accountRepoMock.Setup(r => r.GetByAccountNumberAsync("ACC-DST", default)).ReturnsAsync(dest);
+        _exchangeRateRepoMock.Setup(r => r.GetActiveRateAsync("USD", "EUR", default)).ReturnsAsync(rate);
+
+        var request = new CreateTransferRequest { SourceAccountNumber = "ACC-SRC", DestinationAccountNumber = "ACC-DST", Amount = 1000L };
+        var (response, isReplay) = await _sut.ExecuteTransferAsync(request, "key-x", "alice", "corr-1");
+
+        response.Status.Should().Be(TransferStatus.Completed.ToString());
+        response.AppliedExchangeRateId.Should().Be(rate.Id);
+        response.AppliedRate.Should().Be(0.92m);
+        response.DestinationAmount.Should().Be(920L);  // floor(1000 * 0.92)
+        source.Balance.Should().Be(9000L);
+        dest.Balance.Should().Be(5920L);
     }
 
     [Fact]

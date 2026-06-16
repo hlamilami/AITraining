@@ -10,6 +10,7 @@ public class AppDbContext : DbContext
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<Transfer> Transfers => Set<Transfer>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
+    public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,6 +30,12 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AuditLogEntry>(e =>
         {
             e.HasKey(x => x.Id);
+        });
+
+        modelBuilder.Entity<ExchangeRate>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.SourceCurrency, x.TargetCurrency, x.IsActive });
         });
     }
 }

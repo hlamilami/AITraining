@@ -12,15 +12,18 @@ public class TransferService
     private readonly IAccountRepository _accountRepository;
     private readonly ITransferRepository _transferRepository;
     private readonly IAuditLogRepository _auditLogRepository;
+    private readonly IExchangeRateRepository _exchangeRateRepository;
 
     public TransferService(
         IAccountRepository accountRepository,
         ITransferRepository transferRepository,
-        IAuditLogRepository auditLogRepository)
+        IAuditLogRepository auditLogRepository,
+        IExchangeRateRepository exchangeRateRepository)
     {
         _accountRepository = accountRepository;
         _transferRepository = transferRepository;
         _auditLogRepository = auditLogRepository;
+        _exchangeRateRepository = exchangeRateRepository;
     }
 
     public async Task<(TransferResponse Response, bool IsReplay)> ExecuteTransferAsync(
@@ -53,32 +56,72 @@ public class TransferService
         if (request.Amount <= 0)
             throw new ValidationException(DomainConstants.FailureReasonCodes.InvalidAmount, "Amount must be greater than zero.");
 
-        // 6. Validate currency match
+        // 6. Cross-currency support
+        Guid? appliedExchangeRateId = null;
+        decimal? appliedRate = null;
+        long? destinationAmount = null;
+
         if (sourceAccount.Currency != destAccount.Currency)
         {
-            var rejectedTransfer = new Transfer
+            var rate = await _exchangeRateRepository.GetActiveRateAsync(sourceAccount.Currency, destAccount.Currency, ct);
+            if (rate == null)
             {
-                IdempotencyKey = idempotencyKey,
-                SourceAccountNumber = request.SourceAccountNumber,
-                DestinationAccountNumber = request.DestinationAccountNumber,
-                Amount = request.Amount,
-                Currency = sourceAccount.Currency,
-                Status = TransferStatus.Rejected,
-                FailureReason = DomainConstants.FailureReasonCodes.CurrencyMismatch,
-                InitiatedBy = callerIdentity,
-                Timestamp = DateTimeOffset.UtcNow
-            };
-            await _transferRepository.AddAsync(rejectedTransfer, ct);
-            await _auditLogRepository.AddAsync(new AuditLogEntry
+                var rejectedTransfer = new Transfer
+                {
+                    IdempotencyKey = idempotencyKey,
+                    SourceAccountNumber = request.SourceAccountNumber,
+                    DestinationAccountNumber = request.DestinationAccountNumber,
+                    Amount = request.Amount,
+                    Currency = sourceAccount.Currency,
+                    Status = TransferStatus.Rejected,
+                    FailureReason = DomainConstants.FailureReasonCodes.NoExchangeRateAvailable,
+                    InitiatedBy = callerIdentity,
+                    Timestamp = DateTimeOffset.UtcNow
+                };
+                await _transferRepository.AddAsync(rejectedTransfer, ct);
+                await _auditLogRepository.AddAsync(new AuditLogEntry
+                {
+                    EntityType = "Transfer",
+                    EntityId = rejectedTransfer.Id.ToString(),
+                    Actor = callerIdentity,
+                    Operation = "TransferRejected",
+                    CorrelationId = correlationId,
+                    AfterState = JsonSerializer.Serialize(rejectedTransfer)
+                }, ct);
+                return (MapToResponse(rejectedTransfer), false);
+            }
+
+            var calcDestAmount = (long)Math.Floor((double)request.Amount * (double)rate.Rate);
+            if (calcDestAmount < 1)
             {
-                EntityType = "Transfer",
-                EntityId = rejectedTransfer.Id.ToString(),
-                Actor = callerIdentity,
-                Operation = "TransferRejected",
-                CorrelationId = correlationId,
-                AfterState = JsonSerializer.Serialize(rejectedTransfer)
-            }, ct);
-            return (MapToResponse(rejectedTransfer), false);
+                var rejectedTransfer = new Transfer
+                {
+                    IdempotencyKey = idempotencyKey,
+                    SourceAccountNumber = request.SourceAccountNumber,
+                    DestinationAccountNumber = request.DestinationAccountNumber,
+                    Amount = request.Amount,
+                    Currency = sourceAccount.Currency,
+                    Status = TransferStatus.Rejected,
+                    FailureReason = DomainConstants.FailureReasonCodes.ConversionResultsInZero,
+                    InitiatedBy = callerIdentity,
+                    Timestamp = DateTimeOffset.UtcNow
+                };
+                await _transferRepository.AddAsync(rejectedTransfer, ct);
+                await _auditLogRepository.AddAsync(new AuditLogEntry
+                {
+                    EntityType = "Transfer",
+                    EntityId = rejectedTransfer.Id.ToString(),
+                    Actor = callerIdentity,
+                    Operation = "TransferRejected",
+                    CorrelationId = correlationId,
+                    AfterState = JsonSerializer.Serialize(rejectedTransfer)
+                }, ct);
+                return (MapToResponse(rejectedTransfer), false);
+            }
+
+            appliedExchangeRateId = rate.Id;
+            appliedRate = rate.Rate;
+            destinationAmount = calcDestAmount;
         }
 
         // 7. Authorization: verify callerIdentity == sourceAccount.Owner or has transfer:admin
@@ -118,7 +161,7 @@ public class TransferService
         var beforeDest = JsonSerializer.Serialize(destAccount);
 
         sourceAccount.Balance -= request.Amount;
-        destAccount.Balance += request.Amount;
+        destAccount.Balance += destinationAmount ?? request.Amount;
 
         await _accountRepository.UpdateAsync(sourceAccount, ct);
         await _accountRepository.UpdateAsync(destAccount, ct);
@@ -133,7 +176,10 @@ public class TransferService
             Currency = sourceAccount.Currency,
             Status = TransferStatus.Completed,
             InitiatedBy = callerIdentity,
-            Timestamp = DateTimeOffset.UtcNow
+            Timestamp = DateTimeOffset.UtcNow,
+            AppliedExchangeRateId = appliedExchangeRateId,
+            DestinationAmount = destinationAmount,
+            AppliedRate = appliedRate
         };
 
         await _transferRepository.AddAsync(transfer, ct);
@@ -174,6 +220,9 @@ public class TransferService
         Status = transfer.Status.ToString(),
         FailureReason = transfer.FailureReason,
         InitiatedBy = transfer.InitiatedBy,
-        Timestamp = transfer.Timestamp
+        Timestamp = transfer.Timestamp,
+        AppliedExchangeRateId = transfer.AppliedExchangeRateId,
+        AppliedRate = transfer.AppliedRate,
+        DestinationAmount = transfer.DestinationAmount
     };
 }

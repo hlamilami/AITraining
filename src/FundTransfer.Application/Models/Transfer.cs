@@ -14,4 +14,7 @@ public class Transfer
     public string? FailureReason { get; set; }
     public string InitiatedBy { get; set; } = string.Empty;
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? AppliedExchangeRateId { get; set; }  // null for same-currency transfers
+    public decimal? AppliedRate { get; set; }          // the rate value at time of transfer
+    public long? DestinationAmount { get; set; }       // null for same-currency (same as Amount)
 }

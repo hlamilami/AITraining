@@ -1,6 +1,5 @@
 using FundTransfer.Application.DTOs;
 using FundTransfer.Application.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FundTransfer.Api.Controllers;
@@ -8,7 +7,6 @@ namespace FundTransfer.Api.Controllers;
 /// <summary>Manages fund transfers between accounts.</summary>
 [ApiController]
 [Route("v1/transfers")]
-[Authorize]
 public class TransfersController : ControllerBase
 {
     private readonly TransferService _transferService;
